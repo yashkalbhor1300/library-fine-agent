@@ -232,7 +232,16 @@ def route_after_calculator(state: TA2State) -> str:
 
 
 def approval_node(state: TA2State) -> TA2State:
-    original_fine = state.get("calculator_result", "")
+    original_fine = state.get("calculator_result", "").strip()
+
+    # Remove a leading "Fine:" label to prevent duplicated wording.
+    fine_details = re.sub(
+        r"^\s*Fine:\s*",
+        "",
+        original_fine,
+        count=1,
+        flags=re.IGNORECASE,
+    )
 
     approval = request_human_approval(
         state.get("member_id", "unknown"),
@@ -242,7 +251,7 @@ def approval_node(state: TA2State) -> TA2State:
 
     approved = approval.get("approved", False)
 
-    # Extract the calculated amount from the calculator's result.
+    # Extract the amount from the calculator result.
     amount_match = re.search(
         r"(?:₹|Rs\.?)\s*([\d,]+(?:\.\d{1,2})?)",
         original_fine,
@@ -261,9 +270,9 @@ def approval_node(state: TA2State) -> TA2State:
         approval_status = "APPROVED"
 
     elif approved:
-        # Never claim a zero balance if the amount could not be parsed.
+        # Do not claim zero payable if the amount cannot be parsed.
         answer = (
-            f"Original fine: {original_fine}\n"
+            f"Original fine: {fine_details}\n"
             "Waiver status: APPROVED by human librarian.\n"
             "The fine amount could not be parsed automatically. "
             "Please verify the final payable amount."
@@ -271,10 +280,17 @@ def approval_node(state: TA2State) -> TA2State:
         approval_status = "APPROVED"
 
     else:
+        # Avoid displaying "Fine: Fine: ..." on denial.
+        if amount_match:
+            payable_amount = amount_match.group(1)
+            final_payable = f"₹{payable_amount}"
+        else:
+            final_payable = fine_details
+
         answer = (
-            f"Original fine: {original_fine}\n"
+            f"Original fine: {fine_details}\n"
             "Waiver status: NOT APPROVED; no waiver was granted.\n"
-            f"Final payable fine: {original_fine}"
+            f"Final payable fine: {final_payable}"
         )
         approval_status = "DENIED"
 
