@@ -42,6 +42,7 @@ def _trace(state: TA2State, label: str) -> list[str]:
 
 def supervisor_node(state: TA2State) -> TA2State:
     hops = state.get("hops", 0) + 1
+
     if hops > MAX_HOPS:
         return {
             **state,
@@ -49,6 +50,7 @@ def supervisor_node(state: TA2State) -> TA2State:
             "answer": "Error: maximum supervisor hops reached.",
             "trace": _trace(state, "MAX_HOPS_STOP"),
         }
+
     return {
         **state,
         "hops": hops,
@@ -93,7 +95,7 @@ def calculator_node(state: TA2State) -> TA2State:
     lower_request = current_request.lower()
     policy_text = state.get("policy", "")
 
-    # Reject negative overdue days before any calculation.
+    # Reject negative overdue days.
     if re.search(r"(?<!\w)-\s*\d+\s*(?:days?|d)\b", lower_request):
         return {
             **state,
@@ -107,7 +109,7 @@ def calculator_node(state: TA2State) -> TA2State:
             ),
         }
 
-    # Use an explicit day count from the current request if present.
+    # Find the overdue-day count in the current request.
     day_match = re.search(
         r"\b(\d+)\s*(?:days?|d)\b", lower_request
     )
@@ -115,11 +117,12 @@ def calculator_node(state: TA2State) -> TA2State:
     if day_match:
         days = int(day_match.group(1))
     else:
-        # Follow-up questions may inherit the last explicit day count.
+        # Use previous conversation context for follow-up questions.
         history = state.get("history", "")
         prior_days = re.findall(
             r"\b(\d+)\s*(?:days?|d)\b", history.lower()
         )
+
         if not prior_days:
             return {
                 **state,
@@ -131,9 +134,10 @@ def calculator_node(state: TA2State) -> TA2State:
                     state, "CALCULATOR_AGENT -> VALIDATION_ERROR"
                 ),
             }
+
         days = int(prior_days[-1])
 
-    # Prefer a book type explicitly named in the current request.
+    # Prefer the book type explicitly named in this request.
     book_type = next(
         (
             candidate
@@ -166,7 +170,7 @@ def calculator_node(state: TA2State) -> TA2State:
             ),
         }
 
-    # Read the daily rate from the policy retrieved for this request.
+    # Read the daily rate from the retrieved policy.
     rate_match = re.search(
         rf"\b{re.escape(book_type)}\s*:\s*₹?\s*(\d+)\s*"
         rf"(?:per\s+overdue\s+day|per\s+day)\b",
@@ -189,7 +193,6 @@ def calculator_node(state: TA2State) -> TA2State:
 
     daily_rate = int(rate_match.group(1))
 
-    # Call the tool directly with fresh arguments; do not reuse LLM output.
     calculator_result = calculate_library_fine.invoke(
         {
             "days_overdue": days,
@@ -229,30 +232,58 @@ def route_after_calculator(state: TA2State) -> str:
 
 
 def approval_node(state: TA2State) -> TA2State:
+    original_fine = state.get("calculator_result", "")
+
     approval = request_human_approval(
         state.get("member_id", "unknown"),
-        state.get("calculator_result", ""),
+        original_fine,
         state["user_input"],
     )
 
     approved = approval.get("approved", False)
-    status = (
-        "APPROVED by human librarian."
-        if approved
-        else "NOT APPROVED; no waiver was granted."
+
+    # Extract the calculated amount from the calculator's result.
+    amount_match = re.search(
+        r"(?:₹|Rs\.?)\s*([\d,]+(?:\.\d{1,2})?)",
+        original_fine,
+        re.IGNORECASE,
     )
+
+    if approved and amount_match:
+        original_amount = amount_match.group(1)
+
+        answer = (
+            f"Original fine: ₹{original_amount}\n"
+            "Waiver status: APPROVED by human librarian.\n"
+            f"Waiver amount: ₹{original_amount}\n"
+            "Final payable fine: ₹0"
+        )
+        approval_status = "APPROVED"
+
+    elif approved:
+        # Never claim a zero balance if the amount could not be parsed.
+        answer = (
+            f"Original fine: {original_fine}\n"
+            "Waiver status: APPROVED by human librarian.\n"
+            "The fine amount could not be parsed automatically. "
+            "Please verify the final payable amount."
+        )
+        approval_status = "APPROVED"
+
+    else:
+        answer = (
+            f"Original fine: {original_fine}\n"
+            "Waiver status: NOT APPROVED; no waiver was granted.\n"
+            f"Final payable fine: {original_fine}"
+        )
+        approval_status = "DENIED"
 
     return {
         **state,
         "approval": approval,
-        "answer": (
-            f"{state.get('calculator_result', '')}\n"
-            f"Waiver status: {status}"
-        ),
+        "answer": answer,
         "trace": _trace(
-            state,
-            "HUMAN_APPROVAL -> "
-            + str(approval.get("status", "COMPLETED")),
+            state, f"HUMAN_APPROVAL -> {approval_status}"
         ),
     }
 
