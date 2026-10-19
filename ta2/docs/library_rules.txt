@@ -1,0 +1,20 @@
+LIBRARY RULES — TA2 RAG POLICY DOCUMENT
+
+1. Loan periods
+- Novel: 14 days.
+- Textbook: 30 days.
+- Reference: 7 days and reference books are for library use unless a librarian grants an exception.
+
+2. Fine slabs
+- Novel: ₹2 per overdue day.
+- Textbook: ₹5 per overdue day.
+- Reference: ₹10 per overdue day.
+
+3. Fine calculation
+The fine is the applicable daily rate multiplied by the number of overdue days. The calculator tool performs the arithmetic; policy retrieval supplies the applicable rule.
+
+4. Fine waiver
+A waiver may be requested for exceptional circumstances. A waiver must not be granted automatically by an AI agent. Human approval from a librarian is required before a waiver is confirmed.
+
+5. Policy coverage
+The policy document covers loan periods, supported book types, daily fine slabs, and waiver approval. If a requested policy rule is not present in this document, the assistant must say that the policy chunk was not found and must not invent a rule.
