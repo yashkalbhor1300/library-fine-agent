@@ -35,4 +35,6 @@ Thumbs.db
 *_backup.py
 
 # Empty temporary file
-/TA2State
+/TA2Stateta2/traces/
+TA2State
+ta2/traces/
