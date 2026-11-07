@@ -239,7 +239,7 @@ def approval_node(state: TA2State) -> TA2State:
 
     # A waiver must have a verifiable amount before a human can approve it.
     amount_match = re.search(
-        r"(?:₹|Rs\\.?)\\s*([\\d,]+(?:\\.\\d{1,2})?)",
+        r"(?:₹|Rs\.?)\s*([\d,]+(?:\.\d{1,2})?)",
         original_fine,
         re.IGNORECASE,
     )
