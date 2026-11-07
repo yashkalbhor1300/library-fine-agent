@@ -20,7 +20,8 @@ Instead of allowing a language model to invent fine rates, the system retrieves 
 - Support follow-up questions using conversation context.
 - Maintain member profile information.
 - Stop safely when the required policy cannot be found.
-- Route waiver requests through human approval.
+- Route waiver requests through exact, request-specific human confirmation.
+- Record approved demo waivers in a local SQLite audit ledger; never claim to update a live library account.
 
 ## 2. System Architecture
 
@@ -226,7 +227,7 @@ Try the following inputs when running the application.
 | Follow-up question | `And if it were a reference book?` | Reuse relevant conversation context |
 | Negative late days | `Calculate the fine for a novel returned -3 days late.` | Return a clear validation error |
 | Missing policy | `What is the laptop borrowing fee?` | Stop if no matching policy is retrieved |
-| Waiver request | `A novel is 5 days late. Please waive the fine.` | Route the request through human approval |
+| Waiver request | `A novel is 5 days late. Please waive the fine.` | Require the exact request-specific confirmation phrase; record an approved demo event locally |
 
 ### Expected Results
 
@@ -252,9 +253,23 @@ The calculator should return a validation error rather than a normal fine amount
 
 **Waiver request**
 
-The request should be routed through the human-approval workflow. A waiver should not be granted automatically.
+The request should be routed through the human-approval workflow. The operator must type the exact phrase `APPROVE <request_id>` shown with the member, amount, and reason. A plain `yes`, a mismatched request ID, or an empty response denies the request. An approved event is written once to the local `waiver_events` SQLite table. This is a demo audit record only; it does not modify a live library account, fine balance, or payment system.
 
 *Note: Expected results depend on the rules in `ta2/docs/library_rules.txt` and the application's implemented behavior.*
+
+### Run the safety tests
+
+From the project root:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The tests cover exact confirmation, rejection of a generic `yes`, request-ID mismatch, audit-record creation, denial without a record, and duplicate-request rejection.
+
+### Safety boundary
+
+The confirmation prompt is an interactive demo control, not proof of the operator's identity. The local SQLite ledger is an audit trail for this simulation, not a production authorization service. A real deployment would additionally need authenticated librarian identities, role-based access control, durable audit logging, transaction-level idempotency, and integration with an authorized library system.
 
 ## 9. TA1 vs. TA2 Comparison
 
