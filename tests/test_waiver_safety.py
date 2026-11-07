@@ -1,4 +1,5 @@
 """Safety tests for explicit waiver approval and the demo audit ledger."""
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -80,7 +81,7 @@ class WaiverLedgerTests(unittest.TestCase):
         self.assertEqual(event["status"], "APPROVED")
         self.assertEqual(event["authenticated_identity"], 0)
 
-        with self.assertRaises(Exception):
+        with self.assertRaises(sqlite3.IntegrityError):
             self.store.record_approved_waiver(
                 request_id="req-123",
                 member_id="M001",
