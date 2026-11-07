@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from typing import TypedDict, Any
 
 from langgraph.graph import StateGraph, END
@@ -10,6 +11,7 @@ from langgraph.graph import StateGraph, END
 from .policy_agent import retrieve_library_policy
 from .calculator_agent import calculate_library_fine
 from .human_approval import request_human_approval
+from .waiver_store import WaiverStore
 from .memory_agent import ThreadMemory
 from .profile_store import ProfileStore
 
@@ -34,6 +36,7 @@ class TA2State(TypedDict, total=False):
 
 memory = ThreadMemory()
 profiles = ProfileStore()
+waivers = WaiverStore()
 
 
 def _trace(state: TA2State, label: str) -> list[str]:
@@ -234,63 +237,69 @@ def route_after_calculator(state: TA2State) -> str:
 def approval_node(state: TA2State) -> TA2State:
     original_fine = state.get("calculator_result", "").strip()
 
-    # Remove a leading "Fine:" label to prevent duplicated wording.
-    fine_details = re.sub(
-        r"^\s*Fine:\s*",
-        "",
-        original_fine,
-        count=1,
-        flags=re.IGNORECASE,
-    )
-
-    approval = request_human_approval(
-        state.get("member_id", "unknown"),
-        original_fine,
-        state["user_input"],
-    )
-
-    approved = approval.get("approved", False)
-
-    # Extract the amount from the calculator result.
+    # A waiver must have a verifiable amount before a human can approve it.
     amount_match = re.search(
-        r"(?:₹|Rs\.?)\s*([\d,]+(?:\.\d{1,2})?)",
+        r"(?:₹|Rs\\.?)\\s*([\\d,]+(?:\\.\\d{1,2})?)",
         original_fine,
         re.IGNORECASE,
     )
+    if not amount_match:
+        return {
+            **state,
+            "approval": {"approved": False, "status": "DENIED"},
+            "answer": (
+                "Waiver blocked: the fine amount could not be verified. "
+                "No waiver event was recorded."
+            ),
+            "trace": _trace(state, "HUMAN_APPROVAL -> BLOCKED_AMOUNT_UNVERIFIED"),
+        }
 
-    if approved and amount_match:
-        original_amount = amount_match.group(1)
+    original_amount = amount_match.group(1)
+    request_id = uuid.uuid4().hex[:12]
+    approval = request_human_approval(
+        state.get("member_id", "unknown"),
+        original_amount,
+        state["user_input"],
+        request_id,
+    )
+
+    if approval.get("approved") is True:
+        try:
+            event = waivers.record_approved_waiver(
+                request_id=request_id,
+                member_id=state.get("member_id", "unknown"),
+                fine_amount=original_amount,
+                reason=state["user_input"],
+                approval=approval,
+            )
+        except Exception as exc:
+            # Fail closed: do not report an approved waiver if the audit write fails.
+            return {
+                **state,
+                "approval": {**approval, "recorded": False},
+                "answer": (
+                    "Waiver approval could not be recorded safely. "
+                    "No waiver is confirmed. Please escalate to a librarian. "
+                    f"Audit error: {type(exc).__name__}"
+                ),
+                "trace": _trace(state, "HUMAN_APPROVAL -> AUDIT_WRITE_FAILED"),
+            }
 
         answer = (
-            f"Original fine: ₹{original_amount}\n"
-            "Waiver status: APPROVED by human librarian.\n"
-            f"Waiver amount: ₹{original_amount}\n"
-            "Final payable fine: ₹0"
+            f"Original fine: ₹{original_amount}\\n"
+            "Waiver status: APPROVED by the interactive demo operator.\\n"
+            "Audit status: simulated waiver event recorded locally.\\n"
+            "Demo payable fine: ₹0\\n"
+            f"Audit request ID: {event['request_id']}\\n"
+            "No live library account or payment record was changed."
         )
-        approval_status = "APPROVED"
-
-    elif approved:
-        # Do not claim zero payable if the amount cannot be parsed.
-        answer = (
-            f"Original fine: {fine_details}\n"
-            "Waiver status: APPROVED by human librarian.\n"
-            "The fine amount could not be parsed automatically. "
-            "Please verify the final payable amount."
-        )
-        approval_status = "APPROVED"
-
+        approval_status = "APPROVED_AND_AUDITED"
+        approval = {**approval, "recorded": True, "event": event}
     else:
-        # Avoid displaying "Fine: Fine: ..." on denial.
-        if amount_match:
-            payable_amount = amount_match.group(1)
-            final_payable = f"₹{payable_amount}"
-        else:
-            final_payable = fine_details
-
         answer = (
-            f"Original fine: {fine_details}\n"
-            "Waiver status: NOT APPROVED; no waiver was granted.\n"
-            f"Final payable fine: {final_payable}"
+            f"Original fine: ₹{original_amount}\\n"
+            "Waiver status: NOT APPROVED; no waiver was recorded.\\n"
+            f"Demo payable fine remains: ₹{original_amount}"
         )
         approval_status = "DENIED"
 
@@ -298,9 +307,7 @@ def approval_node(state: TA2State) -> TA2State:
         **state,
         "approval": approval,
         "answer": answer,
-        "trace": _trace(
-            state, f"HUMAN_APPROVAL -> {approval_status}"
-        ),
+        "trace": _trace(state, f"HUMAN_APPROVAL -> {approval_status}"),
     }
 
 
